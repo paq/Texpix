@@ -24,6 +24,8 @@ namespace Texpix
         private const string FallbackChildPrefix = "Texpix Fallback ";
 
         private static readonly List<TexpixQuad> SQuads = new();
+        private static readonly List<TexpixQuad> SMergedQuads = new();
+        private static readonly List<TexpixGlyphAtlasSource> SAtlasSources = new();
         private static readonly List<TexpixQuad> SSpriteQuads = new();
         private static readonly List<Vector3> SSpriteVerts = new();
         private static readonly List<Color32> SSpriteColors = new();
@@ -53,6 +55,13 @@ namespace Texpix
         [SerializeField] private TexpixSpriteAsset spriteAsset;
         [SerializeField] private TexpixOutlineMode outlineMode = TexpixOutlineMode.None;
         [SerializeField] private Color outlineColor = Color.black;
+
+        [SerializeField]
+        [Tooltip("Combines glyph coverage into one non-overlapping mesh so touching or overlapping glyphs " +
+                 "share a continuous outline. Disabled by default because this naïve implementation emits " +
+                 "one quad per covered font pixel and significantly increases mesh-generation cost.")]
+        private bool unifiedOutline;
+
         private readonly List<TexpixSubGraphic> _fallbackSubs = new();
         private readonly List<TexpixFontAsset> _subscribedFonts = new();
 
@@ -233,6 +242,24 @@ namespace Texpix
                 if (outlineColor == value)
                     return;
                 outlineColor = value;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>
+        ///     Combines glyph coverage into one non-overlapping mesh so touching or overlapping
+        ///     glyphs share a continuous outline. Disabled by default because this naïve
+        ///     implementation emits one quad per covered font pixel and significantly increases
+        ///     mesh-generation cost.
+        /// </summary>
+        public bool UnifiedOutline
+        {
+            get => unifiedOutline;
+            set
+            {
+                if (unifiedOutline == value)
+                    return;
+                unifiedOutline = value;
                 SetVerticesDirty();
             }
         }
@@ -539,11 +566,15 @@ namespace Texpix
                 SpriteAsset = spriteAsset
             };
 
+            List<TexpixQuad> renderQuads = SQuads;
             _generating = true;
             try
             {
                 TexpixTextGenerator.Generate(font, text, in settings, SQuads,
                     spriteAsset != null ? SSpriteQuads : null);
+
+                if (unifiedOutline && outlineMode != TexpixOutlineMode.None && ((Color32)outlineColor).a > 0)
+                    renderQuads = BuildUnifiedOutlineQuads();
             }
             finally
             {
@@ -563,7 +594,7 @@ namespace Texpix
             // The payload is per-font: the shader needs the format of the atlas each quad
             // samples, and a fallback font may be packed differently than the primary one.
             var packedOutline = TexpixVertexFormat.PackOutline(outlineColor, outlineMode, font.AtlasFormat);
-            foreach (var quad in SQuads)
+            foreach (var quad in renderQuads)
             {
                 if (quad.FontIndex != 0)
                     continue;
@@ -588,11 +619,21 @@ namespace Texpix
                 vh.AddTriangle(vertexIndex + 2, vertexIndex + 3, vertexIndex);
             }
 
-            UploadFallbackQuads(origin);
+            UploadFallbackQuads(origin, renderQuads);
             UploadSpriteQuads(origin);
         }
 
-        private void UploadFallbackQuads(Vector2 origin)
+        private List<TexpixQuad> BuildUnifiedOutlineQuads()
+        {
+            SAtlasSources.Clear();
+            foreach (var chainFont in font.ResolvedChain)
+                SAtlasSources.Add(new TexpixGlyphAtlasSource(
+                    chainFont.IsReady ? chainFont.AtlasTexture : null, chainFont.AtlasFormat));
+            TexpixGlyphCoverageMerger.Merge(SAtlasSources, SQuads, outlineMode, SMergedQuads);
+            return SMergedQuads;
+        }
+
+        private void UploadFallbackQuads(Vector2 origin, List<TexpixQuad> renderQuads)
         {
             var componentColor = color;
             var chain = font.ResolvedChain;
@@ -609,7 +650,7 @@ namespace Texpix
                 SSpriteUvs.Clear();
                 SSpriteIndices.Clear();
 
-                foreach (var quad in SQuads)
+                foreach (var quad in renderQuads)
                 {
                     if (quad.FontIndex != fontIndex)
                         continue;
