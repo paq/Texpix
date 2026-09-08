@@ -85,7 +85,9 @@ def main() -> None:
             source = '#define SHADER_TARGET 35\n' if kind == 'native' else '#define SHADER_TARGET 20\n'
             if kind == 'native':
                 source += '#define TEXPIX_USE_NATIVE_BITS\n'
-            source += '#include "' + header.resolve().as_posix() + '"\n' + COMMON
+            # Inline the exact file: glslang's CLI includer need not support absolute
+            # include paths. Do not translate or rewrite any HLSL helper functions.
+            source += header.read_text(encoding='utf-8') + '\n' + COMMON
             if stage == 'vert':
                 payload = ('float4(v.uv.xy, mode, format)' if kind == 'legacy'
                            else 'TexpixPrepareCoverage(v.uv.xy, mode, format)')
