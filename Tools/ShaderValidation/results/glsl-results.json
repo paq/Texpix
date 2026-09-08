@@ -1,0 +1,15 @@
+{
+  "programs_sha256": "99ac3a590a787153fb24911824ad7543f5b4e94022f994599deb99942e164d52",
+  "scope": "Mechanically translated GLSL helper functions with rasterization, not Unity or HLSL compiler",
+  "renderer": "llvmpipe (LLVM 19.1.7, 256 bits)",
+  "version": "4.5 (Core Profile) Mesa 25.0.7-2",
+  "GLSL_ES_300_programs_linked": 12,
+  "GLSL_ES_100_shaders_compiled": 16,
+  "render_cases": 288,
+  "RGBA8_channel_comparisons": 150994944,
+  "mismatched_channels": 0,
+  "first_mismatch": null,
+  "status": "PASS",
+  "elapsed_seconds": 0.9932942390441895,
+  "performance_measurement": "NOT_MEASURED: software rasterizer, no hardware GPU timing"
+}

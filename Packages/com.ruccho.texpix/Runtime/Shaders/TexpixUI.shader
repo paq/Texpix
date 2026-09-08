@@ -70,9 +70,11 @@ Shader "Texpix/UI Default"
             {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
-                // xy = atlas font-pixel coords, z = outline mode, w = atlas format.
-                float4 fontPx : TEXCOORD0;
+                // xy = atlas texel coords, zw = visibility/fill thresholds.
+                float4 prepared : TEXCOORD0;
+                #ifdef UNITY_UI_CLIP_RECT
                 float4 mask : TEXCOORD1;
+                #endif
                 fixed4 outlineColor : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
@@ -106,7 +108,7 @@ Shader "Texpix/UI Default"
                 float outlineMode;
                 float atlasFormat;
                 TexpixUnpackOutline(v.texcoord.zw, outlineColor, outlineMode, atlasFormat);
-                o.fontPx = float4(v.texcoord.xy, outlineMode, atlasFormat);
+                o.prepared = TexpixPrepareCoverage(v.texcoord.xy, outlineMode, atlasFormat);
                 o.outlineColor = outlineColor;
                 o.color = TexpixUIVertexColor(v.color, _UIVertexColorAlwaysGammaSpace);
                 return o;
@@ -114,8 +116,8 @@ Shader "Texpix/UI Default"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                float level = TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx.xy, i.fontPx.w);
-                fixed4 color = TexpixShade(level, i.color, i.outlineColor, i.fontPx.z);
+                fixed4 color = TexpixSampleCoverage_Tex2D(
+                    _MainTex, _MainTex_TexelSize, i.prepared, i.color, i.outlineColor);
 
                 #ifdef UNITY_UI_CLIP_RECT
                 fixed2 m = saturate((_ClipRect.zw - _ClipRect.xy - abs(i.mask.xy)) * i.mask.zw);
