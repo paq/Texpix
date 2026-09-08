@@ -1,0 +1,65 @@
+name: Shader validation
+
+on:
+  push:
+    branches: [ 'perf/centered-residue-shader' ]
+    paths:
+      - 'Packages/com.ruccho.texpix/**'
+      - 'Tools/ShaderValidation/**'
+      - '.github/workflows/shader-validation.yml'
+  pull_request:
+    paths:
+      - 'Packages/com.ruccho.texpix/**'
+      - 'Tools/ShaderValidation/**'
+      - '.github/workflows/shader-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shader-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install validation dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang libegl1 libgl1-mesa-dri python3-numpy glslang-tools spirv-tools
+          mkdir -p shader-results
+      - name: Actual-source float32 differential tests
+        run: /usr/bin/python3 Tools/ShaderValidation/validate.py --output shader-results/cpu-results.json
+      - name: HLSL helpers compile to SPIR-V
+        run: /usr/bin/python3 Tools/ShaderValidation/compile_hlsl.py --output shader-results/hlsl-results.json
+      - name: Mesa software raster differential tests
+        run: /usr/bin/python3 Tools/ShaderValidation/run_egl.py --output shader-results/glsl-results.json
+      - name: Generate standalone WebGL2 lab
+        run: /usr/bin/python3 Tools/ShaderValidation/gpu_lab.py --html shader-results/texpix_shader_lab.html
+      - name: Summary
+        if: always()
+        run: |
+          echo '## Shader correctness (not hardware performance)' >> "$GITHUB_STEP_SUMMARY"
+          for report in shader-results/*-results.json; do
+            test -f "$report" || continue
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo 'Unity shader compilation, uGUI integration, and hardware GPU timing remain separate release gates.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: shader-validation-${{ github.sha }}
+          path: shader-results/
+          if-no-files-found: warn
+          retention-days: 14
