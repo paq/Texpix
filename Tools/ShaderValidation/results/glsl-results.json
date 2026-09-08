@@ -1,9 +1,9 @@
 {
-  "candidate_sha256": "52600dddad6457ac16ab18cb4b95f2f1b29e7af796303248b13d8fc3c3ca4a45",
-  "programs_sha256": "722fad3057fde56a0032cbc1c90608a3df019a2bd062a492b6940ca89ed29255",
+  "candidate_sha256": "b3167ada5df323f73a532ff26c98840e4d8ea0c99e4e72bbe87fa495b9097c07",
+  "programs_sha256": "9bacf2e2b63c9a7a99bf4223f3cf8891fc5a41443c03d805a1c9a5a8128135cc",
   "scope": "Mechanically translated GLSL rasterization; NOT Unity/HLSL compiler or browser execution",
-  "renderer": "llvmpipe (LLVM 19.1.7, 256 bits)",
-  "version": "4.5 (Core Profile) Mesa 25.0.7-2",
+  "renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+  "version": "4.5 (Core Profile) Mesa 25.2.8-0ubuntu0.24.04.2",
   "GLSL_ES_300_programs_linked": 12,
   "GLSL_ES_100_shaders_compiled": 16,
   "render_cases": 576,

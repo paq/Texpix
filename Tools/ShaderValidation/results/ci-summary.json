@@ -1,0 +1,30 @@
+{
+  "provenance": "Summary transcribed from the completed GitHub Actions job logs; raw generated reports and browser lab are attached to the run.",
+  "baseline_commit": "32bb76c2c10de3b69e4a6cb492025380b3883f1a",
+  "tested_commit": "80e57df3ec60d2421ce9d1a314a569c203150145",
+  "candidate_hlsl_sha256": "b3167ada5df323f73a532ff26c98840e4d8ea0c99e4e72bbe87fa495b9097c07",
+  "run_url": "https://github.com/paq/Texpix/actions/runs/34272601873",
+  "job_id": 102217674891,
+  "artifact_url": "https://github.com/paq/Texpix/actions/runs/34272601873/artifacts/10074415254",
+  "conclusion": "success",
+  "scalar_assertions_per_configuration": 8100480,
+  "scalar_configurations": 2,
+  "hlsl_compiler": "glslang 15.1.0",
+  "hlsl_spirv_modules_validated": 24,
+  "hlsl_compilation_scope": "Unmodified HLSL header in minimal stage wrappers; not Unity, ShaderLab, actual SM2 compilation, or target GPU ISA.",
+  "optimized_spirv_function_instruction_counts": {
+    "vertex_all_clip_variants": {"legacy": 81, "portable": 90, "native": 90},
+    "fragment_no_clip": {"legacy": 79, "portable": 52, "native": 50},
+    "fragment_alpha_clip": {"legacy": 87, "portable": 60, "native": 58},
+    "fragment_rect_clip": {"legacy": 94, "portable": 67, "native": 65},
+    "fragment_both_clips": {"legacy": 101, "portable": 74, "native": 72}
+  },
+  "instruction_count_caveat": "Counts include function boundaries, loads, stores and composite operations; they are not hardware instruction counts, cycles, GPU durations, or a speedup measurement.",
+  "software_raster_comparison_cases": 576,
+  "rgba8_channel_comparisons": 303169536,
+  "mismatched_channels": 0,
+  "browser_lab_generation": "PASS",
+  "browser_execution": "NOT_RUN",
+  "unity_tests": "NOT_RUN: 24 GPU probe cases and 4 UI variant bind checks are supplied",
+  "hardware_gpu_timing": "NOT_MEASURED"
+}

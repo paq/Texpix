@@ -1,12 +1,13 @@
 # Centered Residue Coverage: Texpix shader optimization
 
 Baseline: `paq/Texpix` main `32bb76c2c10de3b69e4a6cb492025380b3883f1a`.
-Candidate HLSL SHA-256 (LF checkout): `52600dddad6457ac16ab18cb4b95f2f1b29e7af796303248b13d8fc3c3ca4a45`.
+Tested implementation: `80e57df3ec60d2421ce9d1a314a569c203150145`.
+Candidate HLSL SHA-256 (LF checkout): `b3167ada5df323f73a532ff26c98840e4d8ea0c99e4e72bbe87fa495b9097c07`.
 
-This change derives and implements a fused decode/shading path. It is a performance
-candidate with numerical and software-raster validation, **not a measured speedup
-or a world-fastest claim**. The descriptive name does not establish historical
-novelty or patent novelty. No hardware timing has been obtained.
+This change derives and implements a fused decode/shading path. Its numerical tests,
+HLSL helper compilation and software-raster comparisons pass in GitHub Actions.
+It is **not a measured hardware speedup or a world-fastest claim**. The descriptive
+name does not establish historical or patent novelty. No hardware timing has been obtained.
 
 ## What changed
 
@@ -21,6 +22,8 @@ to the vertex stage. Its float4 replaces the existing float4 interpolator, witho
 changing the input mesh's uv0 layout. `TexpixShadePrepared` performs the direct
 classification. The old public functions and macros remain available; custom shaders
 using `TexpixExtractLevel` receive the shorter decoder without changing their source.
+Format predicates remain boolean instead of being materialized as float 0/1 values
+and then compared again. This removes redundant instructions in the tested compiler.
 
 R8 layout, 1bpp/2bpp encoding, packed outline colors, material properties, batching,
 mesh construction, draw order, texture count and draw count are unchanged. The default
@@ -85,16 +88,22 @@ supported new input contract.
 
 ## Executed validation
 
-The reports in `results/` were regenerated from the actual candidate source, rather
-than trusting results left in the interrupted work-in-progress commit.
+The final implementation was tested by [GitHub Actions run 34272601873](https://github.com/paq/Texpix/actions/runs/34272601873).
+The checked-in CPU and GLSL reports are copied from that run's generated output;
+`results/ci-summary.json` records the tested commit, provenance and IR count summary.
+The run artifact contains the full HLSL opcode report and generated standalone HTML.
+The first CI attempt exposed an absolute-include-path issue in the compiler harness;
+it was fixed by inlining the exact header, and all checks were subsequently rerun.
 
 | Test | Executed result |
 |---|---|
-| Actual helper bodies translated to C++ float32, Clang 17, contraction off | 8,100,480 scalar assertions passed |
+| Actual helper bodies translated to C++ float32, Clang 18.1.3, contraction off | 8,100,480 scalar assertions passed |
 | Same source, contraction permitted | 8,100,480 scalar assertions passed |
+| Actual HLSL helpers, glslang 15.1.0, SPIR-V validation before/after optimization | 24 modules passed |
 | Mesa GLSL ES 3.00 compile/link | 12 program pairs linked |
 | Mesa GLSL ES 1.00 compile | 16 individual shaders compiled |
 | Mesa/llvmpipe rendered comparisons | 576 comparisons, 303,169,536 RGBA8 channels, zero differences |
+| Standalone browser lab generation | Passed; browser execution not performed |
 | Unity compiler/Test Runner | Not executed |
 | Real hardware GPU timing | Not measured |
 
@@ -104,18 +113,46 @@ ULPs, NPOT addressing, and 200,000 seeded random cases per compiler configuratio
 Allowing FP contraction is not evidence that FMA instructions were actually executed.
 The raster tests cover POT/NPOT R8 textures (256/257 texels wide), varying vertex colors,
 translucent overdraw, rectangular soft clipping, alpha clipping, fractional positions,
-rotation and perspective interpolation. Rendering was performed by llvmpipe, not a
-hardware GPU, and the renderer identifies itself in the report.
+rotation and perspective interpolation. Rendering used llvmpipe (LLVM 20.1.2) on
+Mesa 25.2.8, not a hardware GPU; the renderer identifies itself in the report.
 
-These are not Unity shader/backend tests. They do not exercise CanvasRenderer,
-Stencil/Mask, XR, gamma/linear project settings, CanvasGroup behavior, the editor atlas
-preview or custom user shaders. Browser WebGL2 execution was unavailable in the build
-environment; the GLSL source used by the browser lab was exercised through Mesa/EGL.
-The browser timer path has not been hardware-validated here.
+HLSL compilation uses the complete unmodified header with minimal vertex/fragment
+wrappers. This verifies HLSL syntax and valid SPIR-V, not Unity's ShaderLab, includes,
+real shader-model-2 compilation, or target GPU ISA. The GLSL raster harness mechanically
+translates the actual helper bodies; it is a separate compiler path, not execution
+of the HLSL-generated SPIR-V. These distinctions are intentional.
+
+These checks do not exercise CanvasRenderer, Stencil/Mask, XR, gamma/linear project
+settings, CanvasGroup behavior, the editor atlas preview or arbitrary custom user
+shaders. The browser's GLSL source was exercised through Mesa/EGL, not a browser;
+the browser timer path has not been hardware-validated here.
 
 The package includes `TexpixShaderTests`: 24 Unity GPU probe cases comparing level/color
 to an integer oracle, plus 4 UI keyword-variant bind checks. These are supplied but
 unrun. Skipping tests because no graphics device is available is not a pass.
+
+## Compiler evidence, not GPU timings
+
+The actual HLSL stage wrappers were compiled using glslang 15.1.0, optimized with
+`spirv-opt -O`, validated with `spirv-val`, and disassembled with `spirv-dis`.
+The following are instruction counts inside optimized SPIR-V functions, including
+loads/stores, composite operations and function boundaries. They are not native GPU
+instruction counts, cycle counts or measured speedups.
+
+| Stage / clipping | Baseline | Portable residue | Optional native bits |
+|---|---:|---:|---:|
+| Vertex, all test variants | 81 | 90 | 90 |
+| Fragment, neither clip | 79 | 52 | 50 |
+| Fragment, alpha clip | 87 | 60 | 58 |
+| Fragment, rectangle clip | 94 | 67 | 65 |
+| Fragment, both clips | 101 | 74 | 72 |
+
+The unclipped portable fragment has 27 fewer IR instructions (34.2% fewer), but the
+vertex stage has 9 more. There is still one texture sample. The portable fragment's
+9 explicit Floor operations become 2 Floor plus 3 Fract operations; how those map to
+hardware instructions is backend-dependent. Integer extraction is slightly smaller
+in this IR, but introduces float/integer conversions and need not be faster on a GPU.
+No hardware speedup percentage is inferred from this table.
 
 ## Reproduce
 
@@ -123,10 +160,12 @@ From the repository root (Python 3.9+; `-X utf8` also handles Japanese Windows l
 
 ```sh
 python -X utf8 Tools/ShaderValidation/validate.py
+python -X utf8 Tools/ShaderValidation/compile_hlsl.py
 python -X utf8 Tools/ShaderValidation/gpu_lab.py --html texpix_shader_lab.html
 ```
 
-The first command needs clang++ or g++. Open the generated HTML in a WebGL2 browser
+The first command needs clang++ or g++. The second needs glslangValidator and SPIR-V
+Tools (spirv-val, spirv-opt, spirv-dis). Open the generated HTML in a WebGL2 browser
 to run the differential comparisons and hardware timer experiment. On Linux with
 NumPy, libEGL and libGL installed, the software raster check is:
 
@@ -176,6 +215,7 @@ exp2/reciprocal decoding are not used to claim an unmeasured win.
 ## References
 
 - Frozen source: `baseline/Texpix.hlsl` (MIT notice in `baseline/LICENSE`).
+- Verified CI: https://github.com/paq/Texpix/actions/runs/34272601873
 - Unity target reference: https://docs.unity3d.com/6000.3/Documentation/Manual/SL-Pragma-target.html
 - HLSL frac: https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-frac
 - GPU timer extension: https://registry.khronos.org/webgl/extensions/EXT_disjoint_timer_query_webgl2/
