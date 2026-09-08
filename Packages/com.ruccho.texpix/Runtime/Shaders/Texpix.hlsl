@@ -89,12 +89,12 @@ float TexpixSubPixel(float2 fontPx, float atlasFormat)
 // lookup texture, or a serial floor/select ladder. texelPhase must be in [0, 1).
 // Four exact constants handle pairs of bits; the optional low bit handles 1bpp.
 // All of this is independent of the sampled byte, so it can overlap the fetch.
-float TexpixResidueScale(float texelPhase, float fillOnly)
+float TexpixResidueScale(float texelPhase, bool fillOnly)
 {
     float scale = texelPhase < 0.5
         ? (texelPhase < 0.25 ? 0.25 : 0.0625)
         : (texelPhase < 0.75 ? 0.015625 : 0.00390625);
-    return scale * ((fillOnly > 0.5 && frac(texelPhase * 4.0) < 0.5) ? 2.0 : 1.0);
+    return scale * ((fillOnly && frac(texelPhase * 4.0) < 0.5) ? 2.0 : 1.0);
 }
 
 // Extracts a level from a point-sampled, linear R8 byte. subPixel is an integer
@@ -107,17 +107,17 @@ float TexpixResidueScale(float texelPhase, float fillOnly)
 // The scale is an exact power of two; this does NOT reintroduce approximate division.
 float TexpixExtractLevel(float atlasR, float subPixel, float atlasFormat)
 {
-    float fillOnly = atlasFormat >= 0.5 ? 1.0 : 0.0;
+    bool fillOnly = atlasFormat >= 0.5;
     #if defined(TEXPIX_USE_NATIVE_BITS)
     uint packedByte = (uint)(atlasR * 255.0 + 0.5);
-    uint shift = (uint)subPixel * (fillOnly > 0.5 ? 1u : 2u);
-    uint level = (packedByte >> shift) & (fillOnly > 0.5 ? 1u : 3u);
-    return (float)level * (fillOnly > 0.5 ? TEXPIX_LEVEL_FILL : 1.0);
+    uint shift = (uint)subPixel * (fillOnly ? 1u : 2u);
+    uint level = (packedByte >> shift) & (fillOnly ? 1u : 3u);
+    return (float)level * (fillOnly ? TEXPIX_LEVEL_FILL : 1.0);
     #else
-    float phase = subPixel * (fillOnly > 0.5 ? 0.125 : 0.25);
+    float phase = subPixel * (fillOnly ? 0.125 : 0.25);
     float residue = frac((atlasR * 255.0 + 0.5) * TexpixResidueScale(phase, fillOnly));
-    float level = floor(residue * (fillOnly > 0.5 ? 2.0 : 4.0));
-    return level * (fillOnly > 0.5 ? TEXPIX_LEVEL_FILL : 1.0);
+    float level = floor(residue * (fillOnly ? 2.0 : 4.0));
+    return level * (fillOnly ? TEXPIX_LEVEL_FILL : 1.0);
     #endif
 }
 
@@ -131,11 +131,11 @@ float TexpixExtractLevel(float atlasR, float subPixel, float atlasFormat)
 // Canvas channels, materials, keywords, textures, or draw calls.
 float4 TexpixPrepareCoverage(float2 fontPx, float outlineMode, float atlasFormat)
 {
-    float fillOnly = atlasFormat >= 0.5 ? 1.0 : 0.0;
-    float fillMin = fillOnly > 0.5 ? 0.5 : 0.75;
+    bool fillOnly = atlasFormat >= 0.5;
+    float fillMin = fillOnly ? 0.5 : 0.75;
     float visibleMin = outlineMode >= 1.5 ? 0.25 : (outlineMode >= 0.5 ? 0.5 : 0.75);
-    visibleMin = fillOnly > 0.5 ? 0.5 : visibleMin;
-    return float4(fontPx.x * (fillOnly > 0.5 ? 0.125 : 0.25), fontPx.y, visibleMin, fillMin);
+    visibleMin = fillOnly ? 0.5 : visibleMin;
+    return float4(fontPx.x * (fillOnly ? 0.125 : 0.25), fontPx.y, visibleMin, fillMin);
 }
 
 float2 TexpixPreparedAtlasUV(float4 prepared, float4 atlasTexelSize)
@@ -151,14 +151,14 @@ float2 TexpixPreparedAtlasUV(float4 prepared, float4 atlasTexelSize)
 float4 TexpixShadePrepared(float atlasR, float4 prepared, float4 fillColor, float4 outlineColor)
 {
     // Use a midpoint comparison instead of treating an interpolated flag as exact.
-    float fillOnly = prepared.w < 0.625 ? 1.0 : 0.0;
+    bool fillOnly = prepared.w < 0.625;
     float phase = frac(prepared.x);
     #if defined(TEXPIX_USE_NATIVE_BITS)
-    uint shift = (uint)(phase * 8.0) & (fillOnly > 0.5 ? 7u : 6u);
+    uint shift = (uint)(phase * 8.0) & (fillOnly ? 7u : 6u);
     uint packedByte = (uint)(atlasR * 255.0 + 0.5);
-    uint field = (packedByte >> shift) & (fillOnly > 0.5 ? 1u : 3u);
+    uint field = (packedByte >> shift) & (fillOnly ? 1u : 3u);
     // Bucket centers also tolerate small interpolator errors in the thresholds.
-    float residue = ((float)field + 0.5) * (fillOnly > 0.5 ? 0.5 : 0.25);
+    float residue = ((float)field + 0.5) * (fillOnly ? 0.5 : 0.25);
     #else
     float residue = frac((atlasR * 255.0 + 0.5) * TexpixResidueScale(phase, fillOnly));
     #endif
