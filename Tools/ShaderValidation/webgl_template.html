@@ -1,0 +1,71 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Texpix Shader Lab</title>
+<style>
+body{font:16px/1.9 system-ui,sans-serif;max-width:1080px;margin:40px auto;padding:0 24px;background:#111820;color:#e1e9ef}h1{line-height:1.2}button,select{font:inherit;padding:8px 12px;margin:6px 12px 6px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#1d2935;padding:20px;border-radius:8px}canvas{width:100%;max-height:220px;image-rendering:pixelated}.note{border-left:3px solid #8da1b5;padding-left:18px}small{color:#b9c8d5}
+</style>
+<h1>Texpix Shader Lab</h1>
+<p>現行版・Centered Residue Coverage・ネイティブ整数版を比較します。関数本体は実際の HLSL ファイルから機械変換しています。Unity のシェーダーコンパイル検証ではありません。描画差分の検証と GPU 時間の測定は区別して表示します。</p>
+<p class="note">基準: main <code>32bb76c2</code>。全256バイト、1bpp / 2bpp、全輪郭モード、頂点色、半透明合成、矩形クリップ、alpha clip、回転・透視補間、POT / NPOT アトラスの576比較。Stencil、XR、CanvasRenderer はこの検証の対象外です。</p>
+<button id="tests">描画差分テスト</button><button id="bench">GPU 計測</button>
+<div><label>形式 <select id="format"><option value="0">2bpp + 輪郭</option><option value="1">1bpp</option></select></label>
+<label>合成負荷 <select id="workload"><option value="1">大きな矩形 × 1</option><option value="64">小さな矩形 × 4096</option></select></label>
+<label><input id="blend" type="checkbox" checked>半透明ブレンド</label></div>
+<small>合成負荷はフラグメント寄り／頂点寄りの比較用です。Unity uGUI の実フレーム時間でも、世界最速を証明するベンチマークでもありません。GPU 計測前に描画差分テストを実行します。</small>
+<pre id="device"></pre><canvas width="1024" height="128"></canvas><pre id="result">未実行</pre>
+<!--
+MIT License
+
+Copyright (c) 2026 ruccho
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<script>
+'use strict';
+/*SHADER_DATA*/
+const $=s=>document.querySelector(s),canvas=$('canvas'),out=$('#result');
+const gl=canvas.getContext('webgl2',{antialias:false,alpha:true,premultipliedAlpha:false,preserveDrawingBuffer:true});
+if(!gl){$('#device').textContent='WebGL 2 が利用できません。';for(const b of document.querySelectorAll('button'))b.disabled=true;throw Error('WebGL 2 unavailable');}
+const dbg=gl.getExtension('WEBGL_debug_renderer_info'),timer=gl.getExtension('EXT_disjoint_timer_query_webgl2');
+const renderer=dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);
+const info={renderer,software:/swiftshader|llvmpipe|software|lavapipe/i.test(renderer),rendererIdentified:!!dbg,gpuTimerAvailable:!!timer,candidate_sha256:DATA.candidate_sha256};
+$('#device').textContent=JSON.stringify(info,null,2);
+function shader(type,source){const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s)+'\n'+source);return s;}
+const programs=new Map();
+for(const src of DATA.programs){const p=gl.createProgram(),v=shader(gl.VERTEX_SHADER,src.vertex),f=shader(gl.FRAGMENT_SHADER,src.fragment);gl.attachShader(p,v);gl.attachShader(p,f);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(p));gl.deleteShader(v);gl.deleteShader(f);const u={};for(const n of DATA.uniforms)u[n]=gl.getUniformLocation(p,n);programs.set([src.kind,src.clip,src.alpha].join(':'),{p,u});}
+const vao=gl.createVertexArray();gl.bindVertexArray(vao);const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+let vertexCount=0;
+function geometry(grid){const a=new Float32Array(grid*grid*12);let i=0;for(let y=0;y<grid;y++)for(let x=0;x<grid;x++){const l=x/grid,r=(x+1)/grid,b=y/grid,t=(y+1)/grid;for(const v of [l,b,r,b,l,t,l,t,r,b,r,t])a[i++]=v;}vertexCount=a.length/2;gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,a,gl.STATIC_DRAW);}
+geometry(1);
+const atlas=gl.createTexture();let atlasWidth=256;
+function setAtlas(width){atlasWidth=width;gl.bindTexture(gl.TEXTURE_2D,atlas);const bytes=new Uint8Array(width*4);for(let y=0;y<4;y++)for(let x=0;x<width;x++)bytes[y*width+x]=(x+y*37)&255;gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.R8,width,4,0,gl.RED,gl.UNSIGNED_BYTE,bytes);for(const p of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER])gl.texParameteri(gl.TEXTURE_2D,p,gl.NEAREST);for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T])gl.texParameteri(gl.TEXTURE_2D,p,gl.CLAMP_TO_EDGE);}
+setAtlas(256);
+const target=gl.createTexture(),fb=gl.createFramebuffer();
+function size(w,h){canvas.width=w;canvas.height=h;gl.bindTexture(gl.TEXTURE_2D,target);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,target,0);if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw Error('Incomplete framebuffer');gl.viewport(0,0,w,h);}
+function setup(kind,fmt,mode,clip,alpha,tr,blend){const {p,u}=programs.get([kind,clip,alpha].join(':'));gl.useProgram(p);gl.bindVertexArray(vao);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,atlas);gl.uniform1i(u.uAtlas,0);gl.uniform1f(u.uFormat,fmt);gl.uniform1f(u.uMode,mode);gl.uniform4f(u.uTexelSize,1/atlasWidth,1/4,atlasWidth,4);gl.uniform2f(u.uRange,atlasWidth*(fmt?8:4),4);const [o,m,t,w]=DATA.transforms[tr];gl.uniform2fv(u.uOffset,o);gl.uniform4fv(u.uTransform,m);gl.uniform2fv(u.uTranslate,t);gl.uniform2fv(u.uPerspective,w);for(const p of [gl.DITHER,gl.DEPTH_TEST,gl.STENCIL_TEST,gl.SCISSOR_TEST,gl.CULL_FACE])gl.disable(p);if(blend){gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);}else gl.disable(gl.BLEND);}
+function draw(){gl.drawArrays(gl.TRIANGLES,0,vertexCount);}
+function render(kind,fmt,mode,clip,alpha,tr,blend){setup(kind,fmt,mode,clip,alpha,tr,blend);gl.clearColor(.125,.25,.375,.5);gl.clear(gl.COLOR_BUFFER_BIT);draw();if(blend)draw();const p=new Uint8Array(canvas.width*canvas.height*4);gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,p);const e=gl.getError();if(e!==gl.NO_ERROR)throw Error('GL error '+e);return p;}
+const pause=()=>new Promise(r=>setTimeout(r,0));
+async function runTests(){geometry(1);size(2056,64);let cases=0,channels=0,bad=0,first=null;for(const aw of [256,257]){setAtlas(aw);for(let fmt=0;fmt<2;fmt++)for(let mode=0;mode<3;mode++)for(let clip=0;clip<2;clip++)for(let alpha=0;alpha<2;alpha++)for(let tr=0;tr<3;tr++)for(let blend=0;blend<2;blend++){const ref=render('legacy',fmt,mode,clip,alpha,tr,blend);for(const kind of ['portable','native']){const now=render(kind,fmt,mode,clip,alpha,tr,blend);cases++;channels+=now.length;for(let i=0;i<now.length;i++)if(now[i]!==ref[i]){bad++;if(!first)first={kind,atlasWidth:aw,fmt,mode,clip,alpha,tr,blend,index:i,expected:ref[i],actual:now[i]};}}if(cases%24===0){out.textContent=`${cases} / 576 比較、差分 ${bad}`;await pause();}}}
+const report={scope:'WebGL 2 GLSL; NOT Unity or HLSL compiler',device:info,linkedPrograms:programs.size,cases,channelComparisons:channels,mismatchedChannels:bad,first,status:bad?'FAIL':'PASS',performance_measurement:'NOT_MEASURED'};out.textContent=JSON.stringify(report,null,2);window.lastReport=report;gl.bindFramebuffer(gl.READ_FRAMEBUFFER,fb);gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,null);gl.blitFramebuffer(0,0,canvas.width,canvas.height,0,0,canvas.width,canvas.height,gl.COLOR_BUFFER_BIT,gl.NEAREST);gl.bindFramebuffer(gl.FRAMEBUFFER,fb);return report;}
+async function timed(draws){const q=gl.createQuery();gl.beginQuery(timer.TIME_ELAPSED_EXT,q);for(let i=0;i<draws;i++)draw();gl.endQuery(timer.TIME_ELAPSED_EXT);gl.flush();const start=performance.now();while(!gl.getQueryParameter(q,gl.QUERY_RESULT_AVAILABLE)){if(performance.now()-start>15000){gl.deleteQuery(q);throw Error('GPU query timeout');}await pause();}if(gl.getParameter(timer.GPU_DISJOINT_EXT)){gl.deleteQuery(q);throw Error('Disjoint GPU clock: discard this run');}const ns=gl.getQueryParameter(q,gl.QUERY_RESULT);gl.deleteQuery(q);if(!Number.isFinite(ns)||ns<=0)throw Error('Invalid GPU timing');return ns;}
+async function runBench(){if(info.software||!dbg||!timer){const report={status:'NOT_MEASURED',device:info,reason:info.software?'Software renderer':!dbg?'Hardware renderer identity unavailable':'GPU timer extension unavailable'};out.textContent=JSON.stringify(report,null,2);return report;}const proof=await runTests();if(proof.status!=='PASS')throw Error('Correctness failure: timing aborted');const fmt=Number($('#format').value),grid=Number($('#workload').value),blend=$('#blend').checked;geometry(grid);size(1024,1024);setAtlas(256);const samples={legacy:[],portable:[],native:[]},draws=16;for(const kind of Object.keys(samples)){setup(kind,fmt,2,0,0,0,blend);for(let i=0;i<64;i++)draw();}gl.finish();for(let n=0;n<30;n++){const order=n%2?['native','portable','legacy']:['legacy','portable','native'];for(const kind of order){setup(kind,fmt,2,0,0,0,blend);gl.clearColor(.125,.25,.375,.5);gl.clear(gl.COLOR_BUFFER_BIT);samples[kind].push(await timed(draws)/draws/1000);}out.textContent=`GPU batches: ${n+1} / 30`;}
+const stats={};for(const [kind,a]of Object.entries(samples)){const s=[...a].sort((a,b)=>a-b);stats[kind]={medianUs:(s[14]+s[15])/2,p10Us:s[3],p90Us:s[26],rawUs:a};}const report={status:'MEASURED_SYNTHETIC_GPU_ONLY',device:info,format:fmt,rectangles:grid*grid,vertices:vertexCount,resolution:[1024,1024],blend,drawsPerQuery:draws,batches:30,stats,speedup:{portable:stats.legacy.medianUs/stats.portable.medianUs,native:stats.legacy.medianUs/stats.native.medianUs},caveat:'Synthetic microbenchmark; not Unity frame time or a world-fastest claim'};out.textContent=JSON.stringify(report,null,2);window.lastReport=report;return report;}
+window.runTests=runTests;window.runBench=runBench;window.shaderLabInfo=info;
+for(const [id,fn]of [['tests',runTests],['bench',runBench]])$('#'+id).onclick=async()=>{for(const b of document.querySelectorAll('button'))b.disabled=true;try{await fn();}catch(e){out.textContent=e.stack;}finally{for(const b of document.querySelectorAll('button'))b.disabled=false;}};
+</script></html>
