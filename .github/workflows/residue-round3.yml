@@ -1,0 +1,27 @@
+name: Residue round 3 experiments
+on:
+  push:
+    branches: ['perf/residue-round3']
+permissions:
+  contents: read
+jobs:
+  fxc:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Compare pinned shader candidates
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe' | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { throw 'FXC unavailable' }
+          python Tools/ResidueRound3/experiment.py --fxc $fxc.FullName --output round3-results
+          if ($LASTEXITCODE -ne 0) { throw 'FXC experiment failed' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: residue-round3-fxc
+          path: round3-results/
+          retention-days: 14
