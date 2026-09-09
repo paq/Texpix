@@ -1,0 +1,45 @@
+{
+  "provenance": "Transcribed from completed GitHub Actions job 102302262564; not a newly executed run. Raw generated reports and disassembly are attached to that run.",
+  "baseline_commit": "e55897ddca6259cc8249f0306bcb2c1900f0571c",
+  "tested_commit": "ee98cd376af5f6d69e423b01a7d6101aaa09704a",
+  "fast_hlsl_sha256_lf": "3ef6c956f478dbf738867d46f78e32b8af3d0aec54c7afdb79ad71997bd88684",
+  "run_url": "https://github.com/paq/Texpix/actions/runs/34299183172",
+  "job_url": "https://github.com/paq/Texpix/actions/runs/34299183172/job/102302262564",
+  "artifact_url": "https://github.com/paq/Texpix/actions/runs/34299183172/artifacts/10084279872",
+  "conclusion": "success",
+  "compiler": "Windows SDK 10.0.26100.0 FXC",
+  "compile_scope": "Actual HLSL includes inside minimal vs_4_0/ps_4_0 wrappers; not Unity ShaderLab, actual SM2 compilation or native ISA.",
+  "fragment_dxbc_operations": {
+    "no_clip": {"round2": 20, "round3": 17},
+    "alpha_clip": {"round2": 24, "round3": 21},
+    "rect_clip": {"round2": 26, "round3": 23},
+    "both_clips": {"round2": 29, "round3": 26}
+  },
+  "fragment_temporary_registers": {"round2": 2, "round3": 2},
+  "vertex_dxbc_operations": {
+    "linear": {"round2": 45, "round3": 43},
+    "gamma": {"round2": 31, "round3": 28}
+  },
+  "vertex_temporary_registers": {
+    "linear": {"round2": 3, "round3": 5},
+    "gamma": {"round2": 2, "round3": 3}
+  },
+  "counting_scope": "Executable DXBC operations including ret, excluding declarations; vector operations count once. Not hardware cycles or durations.",
+  "device": "D3D11 WARP (software)",
+  "compute_cases_per_colorspace": 566936,
+  "colorspaces": 2,
+  "compute_differential_mismatches": 0,
+  "unpack_mismatches": 0,
+  "integer_oracle_mismatches": 0,
+  "execution_signature_and_sample_mismatches": 0,
+  "raster_cases": 3072,
+  "rgba8_channels": 404226048,
+  "raster_mismatches": 0,
+  "uniform_render_images": 0,
+  "minimum_pixels_different_from_first": 3937,
+  "vertex_color_conversion_flags_tested": [0, 1],
+  "raster_color_scope": "Gamma/linear shader conversion paths on RGBA8 UNORM target, not complete Unity color-space projects.",
+  "unity_tests": "NOT_RUN",
+  "metal_tests": "NOT_RUN",
+  "hardware_gpu_timing": "NOT_MEASURED"
+}
