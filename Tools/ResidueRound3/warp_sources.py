@@ -7,13 +7,13 @@ HERE=Path(__file__).resolve().parent
 FAST=HERE.parents[1]/'Packages/com.ruccho.texpix/Runtime/Shaders/TexpixUIFast.hlsl'
 COMMON=r'''
 Texture2D<float4> atlas:register(t0); SamplerState samp:register(s0);
-cbuffer Constants:register(b0) {float4 ts;float4 rect;float4x4 matrix;float4 flags;};
+cbuffer Constants:register(b0) {float4 ts;float4 rect;float4x4 objectToClip;float4 flags;};
 struct Input {float4 vertex:POSITION;float4 color:COLOR0;float4 uv:TEXCOORD0;};
 struct Varyings {float4 vertex:SV_POSITION;float4 color:COLOR0;float4 p:TEXCOORD0;float4 mask:TEXCOORD1;float4 alt:TEXCOORD2;};
 '''
 VERT=r'''
 Varyings main(Input v) {
-    Varyings o; o.vertex=mul(matrix,v.vertex);
+    Varyings o; o.vertex=mul(objectToClip,v.vertex);
 #if FAST_UI
     TexpixPrepareUI(v.uv,v.color,flags.x,o.p,o.color,o.alt);
 #else
