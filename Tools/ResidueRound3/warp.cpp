@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -21,6 +22,7 @@ std::vector<char> read(const fs::path& p){std::ifstream f(p,std::ios::binary);if
 struct V{float pos[4],color[4],uv[4];};
 struct C{float ts[4],rect[4],matrix[16],flags[4];};
 struct Case{float data[4],fill[4],outline[4],extra[4];};
+static_assert(sizeof(C)==112 && sizeof(Case)==64 && sizeof(V)==48,"Shader layout mismatch");
 int main(int argc,char**argv){try{
     fs::path root=argc>1?argv[1]:"round3-results";
     ComPtr<ID3D11Device> dev;ComPtr<ID3D11DeviceContext> ctx;D3D_FEATURE_LEVEL level;
@@ -63,16 +65,28 @@ int main(int argc,char**argv){try{
     auto staging=buffer((UINT)(cases.size()*16),0,0,0,nullptr,D3D11_USAGE_STAGING,D3D11_CPU_ACCESS_READ);
     ComPtr<ID3D11ShaderResourceView>iv;check(dev->CreateShaderResourceView(input.Get(),nullptr,&iv));ID3D11ShaderResourceView*ip=iv.Get();ctx->CSSetShaderResources(1,1,&ip);
     ComPtr<ID3D11UnorderedAccessView>ov;check(dev->CreateUnorderedAccessView(output.Get(),nullptr,&ov));ID3D11UnorderedAccessView*op=ov.Get();ctx->CSSetUnorderedAccessViews(0,1,&op,nullptr);
-    uint64_t scalarBad=0,unpackBad=0,oracleBad=0;
+    uint64_t scalarBad=0,unpackBad=0,oracleBad=0,signatureBad=0;
     for(int gamma=0;gamma<2;++gamma){
         auto bytes=read(root/("cs-g"+std::to_string(gamma)+".dxbc"));ComPtr<ID3D11ComputeShader>cs;check(dev->CreateComputeShader(bytes.data(),bytes.size(),nullptr,&cs));ctx->CSSetShader(cs.Get(),nullptr,0);
+        const UINT sentinel[4]={0xdeadbeefu,0xdeadbeefu,0xdeadbeefu,0xdeadbeefu};
+        ctx->ClearUnorderedAccessViewUint(ov.Get(),sentinel);
         c.flags[1]=(float)cases.size();ctx->UpdateSubresource(constants.Get(),0,nullptr,&c,0,0);ctx->Dispatch((UINT)(cases.size()+63)/64,1,1);ctx->CopyResource(staging.Get(),output.Get());
         D3D11_MAPPED_SUBRESOURCE map;check(ctx->Map(staging.Get(),0,D3D11_MAP_READ,0,&map));auto p=(const uint32_t*)map.pData;
-        for(size_t i=0;i<cases.size();++i){scalarBad+=p[i*4];unpackBad+=p[i*4+1];oracleBad+=p[i*4+2];if((p[i*4]||p[i*4+1]||p[i*4+2])&&scalarBad+unpackBad+oracleBad<4)std::cout<<"FIRST COMPUTE "<<i<<" x="<<cases[i].data[0]<<" mode="<<cases[i].data[2]<<" fmt="<<cases[i].data[3]<<" flags="<<p[i*4]<<","<<p[i*4+1]<<","<<p[i*4+2]<<"\n";}
+        for(size_t i=0;i<cases.size();++i){
+            scalarBad+=p[i*4];unpackBad+=p[i*4+1];oracleBad+=p[i*4+2];
+            const auto& v=cases[i];
+            int tx=std::clamp((int)std::floor(v.data[0]/(v.data[3]>=.5f?8.f:4.f)),0,256);
+            int ty=std::clamp((int)std::floor(v.data[1]),0,3);
+            uint32_t sampledByte=(uint32_t)((tx+37*ty)&255);
+            uint32_t expectedSignature=(uint32_t)i ^ 0x54585033u ^ (sampledByte<<20u);
+            signatureBad+=(p[i*4+3]!=expectedSignature);
+            if((p[i*4]||p[i*4+1]||p[i*4+2])&&scalarBad+unpackBad+oracleBad<4)
+                std::cout<<"FIRST COMPUTE "<<i<<" x="<<v.data[0]<<" mode="<<v.data[2]<<" fmt="<<v.data[3]<<" flags="<<p[i*4]<<","<<p[i*4+1]<<","<<p[i*4+2]<<"\n";
+        }
         ctx->Unmap(staging.Get(),0);
     }
     ctx->CSSetShader(nullptr,nullptr,0);op=nullptr;ctx->CSSetUnorderedAccessViews(0,1,&op,nullptr);
-    std::cout<<"COMPUTE cases_per_colorspace="<<cases.size()<<" colorspaces=2 differential_bad="<<scalarBad<<" unpack_bad="<<unpackBad<<" oracle_bad="<<oracleBad<<"\n";
+    std::cout<<"COMPUTE cases_per_colorspace="<<cases.size()<<" colorspaces=2 differential_bad="<<scalarBad<<" unpack_bad="<<unpackBad<<" oracle_bad="<<oracleBad<<" signature_bad="<<signatureBad<<"\n";
     const int W=2056,H=16;
     D3D11_TEXTURE2D_DESC td={};td.Width=W;td.Height=H;td.MipLevels=td.ArraySize=1;td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;td.SampleDesc.Count=1;td.BindFlags=D3D11_BIND_RENDER_TARGET;
     ComPtr<ID3D11Texture2D>rt,rb;check(dev->CreateTexture2D(&td,nullptr,&rt));ComPtr<ID3D11RenderTargetView>rv;check(dev->CreateRenderTargetView(rt.Get(),nullptr,&rv));ID3D11RenderTargetView*r=rv.Get();ctx->OMSetRenderTargets(1,&r,nullptr);
@@ -88,7 +102,8 @@ int main(int argc,char**argv){try{
         for(int cr=0;cr<2;++cr)for(int ac=0;ac<2;++ac){bytes=read(root/("ps-f"+std::to_string(f)+"-g"+std::to_string(g)+"-r"+std::to_string(cr)+"-a"+std::to_string(ac)+".dxbc"));check(dev->CreatePixelShader(bytes.data(),bytes.size(),nullptr,&ps[f][g][cr][ac]));}
     }
     ctx->IASetInputLayout(layout.Get());ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    uint64_t comparisons=0,channels=0,bad=0;
+    uint64_t comparisons=0,channels=0,bad=0,uniformImages=0;
+    uint64_t minimumDistinctPixels=std::numeric_limits<uint64_t>::max();
     for(int aw:{256,257}){setAtlas(aw);
     for(int fmt=0;fmt<2;++fmt)for(int mode=0;mode<4;++mode)for(int grid:{1,32}){
         std::vector<V>vertices;
@@ -96,20 +111,43 @@ int main(int argc,char**argv){try{
             for(auto&t:xy){V v={};v.pos[0]=2*t[0]-1;v.pos[1]=2*t[1]-1;v.pos[3]=1;v.color[0]=.25f+.5f*t[0];v.color[1]=.5f;v.color[2]=1-.5f*t[1];v.color[3]=.625f;
                 v.uv[0]=t[0]*aw*(fmt?8:4);v.uv[1]=t[1]*4;v.uv[2]=192*256+32;v.uv[3]=(float)(fmt*262144+128*1024+96*4+mode);vertices.push_back(v);}}
         auto vb=buffer((UINT)(vertices.size()*sizeof(V)),D3D11_BIND_VERTEX_BUFFER,0,0,vertices.data());ID3D11Buffer*v=vb.Get();UINT stride=sizeof(V),off=0;ctx->IASetVertexBuffers(0,1,&v,&stride,&off);
-        for(int tr=0;tr<3;++tr){std::fill(c.matrix,c.matrix+16,0);c.matrix[10]=c.matrix[15]=1;c.matrix[0]=c.matrix[5]=1;
+        for(int tr=0;tr<3;++tr){std::fill(c.matrix,c.matrix+16,0.f);c.matrix[10]=c.matrix[15]=1;c.matrix[0]=c.matrix[5]=1;
             if(tr){c.matrix[0]=.85f;c.matrix[5]=.87f;c.matrix[1]=.18f;c.matrix[4]=-.13f;c.matrix[12]=.013f;c.matrix[13]=-.021f;}
             if(tr==2){c.matrix[3]=.15f;c.matrix[7]=-.08f;}
-            for(int g=0;g<2;++g)for(int cr=0;cr<2;++cr)for(int ac=0;ac<2;++ac)for(int b=0;b<2;++b){
-                c.flags[0]=1;ctx->UpdateSubresource(constants.Get(),0,nullptr,&c,0,0);ctx->OMSetBlendState(blend[b].Get(),nullptr,0xffffffffu);
+            for(int g=0;g<2;++g)for(int cr=0;cr<2;++cr)for(int ac=0;ac<2;++ac)for(int b=0;b<2;++b)for(int convert=0;convert<2;++convert){
+                c.flags[0]=(float)convert;ctx->UpdateSubresource(constants.Get(),0,nullptr,&c,0,0);ctx->OMSetBlendState(blend[b].Get(),nullptr,0xffffffffu);
                 std::vector<uint8_t> ref(W*H*4);
-                for(int f=0;f<2;++f){float clear[]={.125f,.25f,.375f,.5f};ctx->ClearRenderTargetView(rv.Get(),clear);ctx->VSSetShader(vs[f][g].Get(),nullptr,0);ctx->PSSetShader(ps[f][g][cr][ac].Get(),nullptr,0);ctx->Draw((UINT)vertices.size(),0);if(b)ctx->Draw((UINT)vertices.size(),0);ctx->CopyResource(rb.Get(),rt.Get());D3D11_MAPPED_SUBRESOURCE map;check(ctx->Map(rb.Get(),0,D3D11_MAP_READ,0,&map));
-                    for(int y=0;y<H;++y){auto p=(const uint8_t*)map.pData+y*map.RowPitch;for(int x=0;x<W*4;++x){size_t i=(size_t)y*W*4+x;if(!f)ref[i]=p[x];else if(ref[i]!=p[x]){++bad;if(bad<4)std::cout<<"FIRST RASTER aw="<<aw<<" fmt="<<fmt<<" mode="<<mode<<" grid="<<grid<<" tr="<<tr<<" g="<<g<<" clip="<<cr<<ac<<" blend="<<b<<" idx="<<i<<" ref="<<(int)ref[i]<<" new="<<(int)p[x]<<"\n";}}}
+                for(int f=0;f<2;++f){
+                    float clear[]={.125f,.25f,.375f,.5f};ctx->ClearRenderTargetView(rv.Get(),clear);
+                    ctx->VSSetShader(vs[f][g].Get(),nullptr,0);ctx->PSSetShader(ps[f][g][cr][ac].Get(),nullptr,0);
+                    ctx->Draw((UINT)vertices.size(),0);if(b)ctx->Draw((UINT)vertices.size(),0);
+                    ctx->CopyResource(rb.Get(),rt.Get());D3D11_MAPPED_SUBRESOURCE map;check(ctx->Map(rb.Get(),0,D3D11_MAP_READ,0,&map));
+                    uint64_t distinct=0;auto first=(const uint8_t*)map.pData;
+                    for(int y=0;y<H;++y){
+                        auto p=(const uint8_t*)map.pData+y*map.RowPitch;
+                        for(int px=0;px<W;++px)distinct+=!std::equal(p+px*4,p+px*4+4,first);
+                        for(int x=0;x<W*4;++x){size_t i=(size_t)y*W*4+x;if(!f)ref[i]=p[x];else if(ref[i]!=p[x]){
+                            ++bad;if(bad<4)std::cout<<"FIRST RASTER aw="<<aw<<" fmt="<<fmt<<" mode="<<mode<<" grid="<<grid<<" tr="<<tr<<" g="<<g<<" clip="<<cr<<ac<<" blend="<<b<<" convert="<<convert<<" idx="<<i<<" ref="<<(int)ref[i]<<" new="<<(int)p[x]<<"\n";
+                        }}
+                    }
+                    minimumDistinctPixels=std::min(minimumDistinctPixels,distinct);uniformImages+=(distinct==0);
                     ctx->Unmap(rb.Get(),0);
                 }
                 ++comparisons;channels+=(uint64_t)W*H*4;
             }
         }
     }}
-    std::ofstream report(root/"warp-results.json");report<<"{\n  \"device\":\"D3D11 WARP (software)\",\n  \"scope\":\"Actual compiled HLSL helpers; compute probes and VS/PS raster pairs. Not Unity or hardware performance.\",\n  \"compute_cases_per_colorspace\":"<<cases.size()<<",\n  \"colorspaces\":2,\n  \"compute_differential_mismatches\":"<<scalarBad<<",\n  \"unpack_mismatches\":"<<unpackBad<<",\n  \"integer_oracle_mismatches\":"<<oracleBad<<",\n  \"raster_cases\":"<<comparisons<<",\n  \"rgba8_channels\":"<<channels<<",\n  \"raster_mismatches\":"<<bad<<",\n  \"hardware_timing\":\"NOT_MEASURED\",\n  \"status\":\""<<((scalarBad+unpackBad+oracleBad+bad)?"FAIL":"PASS")<<"\"\n}\n";report.close();std::cout<<std::ifstream(root/"warp-results.json").rdbuf();
-    return scalarBad+unpackBad+oracleBad+bad?1:0;
+    bool failed=scalarBad||unpackBad||oracleBad||signatureBad||bad||uniformImages;
+    std::ofstream report(root/"warp-results.json");
+    if(!report)throw std::runtime_error("Could not create result file");
+    report<<"{\n  \"device\":\"D3D11 WARP (software)\",\n  \"scope\":\"Actual compiled HLSL helpers; compute probes and VS/PS raster pairs. Not Unity or hardware performance.\",\n  \"compute_cases_per_colorspace\":"<<cases.size()
+          <<",\n  \"colorspaces\":2,\n  \"compute_differential_mismatches\":"<<scalarBad
+          <<",\n  \"unpack_mismatches\":"<<unpackBad<<",\n  \"integer_oracle_mismatches\":"<<oracleBad
+          <<",\n  \"execution_signature_and_sample_mismatches\":"<<signatureBad
+          <<",\n  \"raster_cases\":"<<comparisons<<",\n  \"rgba8_channels\":"<<channels
+          <<",\n  \"raster_mismatches\":"<<bad<<",\n  \"uniform_render_images\":"<<uniformImages
+          <<",\n  \"minimum_pixels_different_from_first\":"<<minimumDistinctPixels
+          <<",\n  \"vertex_color_conversion_flags_tested\":[0,1],\n  \"hardware_timing\":\"NOT_MEASURED\",\n  \"status\":\""<<(failed?"FAIL":"PASS")<<"\"\n}\n";
+    report.close();std::cout<<std::ifstream(root/"warp-results.json").rdbuf();
+    return failed?1:0;
 }catch(const std::exception&e){std::cerr<<e.what()<<"\n";return 1;}}

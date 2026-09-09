@@ -52,7 +52,7 @@ Shader "Texpix/UI Default"
 
             #include "UnityCG.cginc"
             #include "UnityUI.cginc"
-            #include "Texpix.hlsl"
+            #include "TexpixUIFast.hlsl"
 
             #pragma multi_compile_local _ UNITY_UI_CLIP_RECT
             #pragma multi_compile_local _ UNITY_UI_ALPHACLIP
@@ -70,10 +70,11 @@ Shader "Texpix/UI Default"
             {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
-                // xy = atlas texel coords, zw = visibility/fill thresholds.
+                // xy = atlas texel coords, z = visibility, w = low-bit selector coordinate.
                 float4 params : TEXCOORD0;
                 float4 mask : TEXCOORD1;
-                fixed4 outlineColor : TEXCOORD2;
+                // Outline for 2bpp, a second copy of fill for 1bpp.
+                fixed4 alternateColor : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -102,20 +103,19 @@ Shader "Texpix/UI Default"
                     0.25 / (0.25 * float2(_UIMaskSoftnessX, _UIMaskSoftnessY) + abs(pixelSize)));
                 #endif
 
-                float4 outlineColor;
-                float outlineMode;
-                float atlasFormat;
-                TexpixUnpackOutline(v.texcoord.zw, outlineColor, outlineMode, atlasFormat);
-                o.params = TexpixPrepareCoverage(v.texcoord.xy, outlineMode, atlasFormat);
-                o.outlineColor = outlineColor;
-                o.color = TexpixUIVertexColor(v.color, _UIVertexColorAlwaysGammaSpace);
+                float4 fillColor;
+                float4 alternateColor;
+                TexpixPrepareUI(v.texcoord, v.color, _UIVertexColorAlwaysGammaSpace,
+                                o.params, fillColor, alternateColor);
+                o.color = fillColor;
+                o.alternateColor = alternateColor;
                 return o;
             }
 
             fixed4 frag(v2f i) : SV_Target
             {
-                fixed4 color = TexpixSampleCoverage_Tex2D(
-                    _MainTex, _MainTex_TexelSize, i.params, i.color, i.outlineColor);
+                fixed4 color = TexpixSampleUI_Tex2D(
+                    _MainTex, _MainTex_TexelSize, i.params, i.color, i.alternateColor);
 
                 #ifdef UNITY_UI_CLIP_RECT
                 fixed2 m = saturate((_ClipRect.zw - _ClipRect.xy - abs(i.mask.xy)) * i.mask.zw);

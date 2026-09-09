@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Generate paired D3D11 stages from the exact baseline and actual fast UI include."""
+"""Generate paired D3D11 stages from the frozen baseline and actual fast UI include.
+
+The source integration check does not substitute for Unity ShaderLab compilation.
+"""
 from pathlib import Path
 import argparse, hashlib, json
 from experiment import run, count_ops
 HERE=Path(__file__).resolve().parent
-FAST=HERE.parents[1]/'Packages/com.ruccho.texpix/Runtime/Shaders/TexpixUIFast.hlsl'
+SHADERS=HERE.parents[1]/'Packages/com.ruccho.texpix/Runtime/Shaders'
+FAST=SHADERS/'TexpixUIFast.hlsl'
 COMMON=r'''
 Texture2D<float4> atlas:register(t0); SamplerState samp:register(s0);
 cbuffer Constants:register(b0) {float4 ts;float4 rect;float4x4 objectToClip;float4 flags;};
@@ -74,13 +78,25 @@ void main(uint3 id:SV_DispatchThreadID) {
     uint level=format>=0.5?((byte>>sub)&1u)*3u:((byte>>(2u*sub))&3u);
     float4 oracle=level==3u?c.fill:((mode>=1.5&&level>=1u)||(mode>=0.5&&level==2u)?c.outline:float4(0,0,0,0));
     uint wrong=any(oracle!=TexpixShadeUI(raw,p,c.fill,alt));
-    outputData[k]=uint4(mismatch,unpack,wrong,0);
+    // CPU checks this signature and the sampled byte independently: unwritten
+    // UAVs or an unbound/all-zero atlas must not look like successful tests.
+    uint signature=k ^ 0x54585033u ^ (byte<<20u);
+    outputData[k]=uint4(mismatch,unpack,wrong,signature);
 }
 '''
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--fxc',type=Path,required=True);ap.add_argument('--output',type=Path,default=Path('round3-results'))
     a=ap.parse_args();a.output.mkdir(exist_ok=True,parents=True)
     base=(HERE/'baseline.hlsl').read_text(encoding='utf-8')
+    generic=(SHADERS/'Texpix.hlsl').read_text(encoding='utf-8')
+    if generic != base: raise ValueError('Generic helpers changed: refresh the paired-source harness explicitly')
+    ui=(SHADERS/'TexpixUI.shader').read_text(encoding='utf-8')
+    for required in ['#include "TexpixUIFast.hlsl"','TexpixPrepareUI(', 'TexpixSampleUI_Tex2D(']:
+        if required not in ui: raise ValueError('Default UI is not wired to the tested fast include: '+required)
+    # Regression check for the round-2 sample_indexable parser omission.
+    counted,_=count_ops('ps_5_0\ndcl_temps 2\nsample_indexable(texture2d)(float,float,float,float) r0, v0, t0, s0\nret\n')
+    if counted['instructions']!=2 or counted['opcodes'].get('sample_indexable')!=1:
+        raise ValueError('DXBC sample instruction omitted from count')
     fast=FAST.read_text(encoding='utf-8').replace('#include "Texpix.hlsl"','')
     results=[]
     for gamma in range(2):
@@ -100,7 +116,10 @@ def main():
         path.write_text(prefix+COMPUTE,encoding='utf-8')
         run([a.fxc,'/nologo','/T','cs_5_0','/E','main','/O3','/Fo',obj,path])
     report=dict(scope='Actual fast include vs pinned round-2 include, FXC minimal stage wrappers; NOT Unity',
-        fast_sha256=hashlib.sha256(FAST.read_text(encoding='utf-8').encode()).hexdigest(),fxc=str(a.fxc),results=results)
+        fast_sha256=hashlib.sha256(FAST.read_text(encoding='utf-8').encode()).hexdigest(),
+        ui_shader_sha256=hashlib.sha256(ui.encode()).hexdigest(),
+        integration_source_check='PASS (not ShaderLab compilation)', sample_opcode_parser_check='PASS',
+        fxc=str(a.fxc),results=results)
     (a.output/'selected-fxc.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     for row in results:print(json.dumps(row),flush=True)
     print('FAST_SOURCE_SHA256 '+report['fast_sha256'])
