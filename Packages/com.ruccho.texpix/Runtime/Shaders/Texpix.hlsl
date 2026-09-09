@@ -132,18 +132,19 @@ float2 TexpixPreparedAtlasUV(float4 prepared, float4 atlasTexelSize)
 }
 
 // Fused extraction + palette evaluation. Do not reconstruct the integer level:
-// thresholds classify the residue directly. visibleMin <= fillMin, so the two
-// masks are disjoint and the selected straight-alpha color is preserved exactly.
-// No lerp-based color cancellation, premultiplication, or change to blending.
+// thresholds classify the residue directly. visibleMin <= fillMin, so the selected
+// straight-alpha color is exactly outside / outline / fill.
 float4 TexpixShadePrepared(float atlasR, float4 prepared, float4 fillColor, float4 outlineColor)
 {
     // Use a midpoint comparison instead of treating an interpolated flag as exact.
     bool fillOnly = prepared.w < 0.625;
     float phase = frac(prepared.x);
     float residue = frac((atlasR * 255.0 + 0.5) * TexpixResidueScale(phase, fillOnly));
-    float isFill = step(prepared.w, residue);
-    float isOutline = step(prepared.z, residue) - isFill;
-    return fillColor * isFill + outlineColor * isOutline;
+
+    // Select the palette entry directly. The previous mask formulation multiplied
+    // both float4 colors and added them, even though exactly one can contribute.
+    float4 visibleColor = residue >= prepared.w ? fillColor : outlineColor;
+    return residue >= prepared.z ? visibleColor : float4(0.0, 0.0, 0.0, 0.0);
 }
 
 // Usage: prepare once per vertex, then sample/shade once per fragment. The fetch
